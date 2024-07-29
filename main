@@ -1,0 +1,88 @@
+import pandas as pd
+import numpy as np
+import streamlit as st
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.callbacks import ModelCheckpoint
+
+# Load the dataset
+data = pd.read_csv('dataset.csv')  # Ensure this path is correct
+
+# Feature selection
+features = ['FTHG', 'FTAG', 'HTHG', 'HTAG', 'HS', 'AS', 'HST', 'AST', 
+            'HF', 'AF', 'HC', 'AC', 'HY', 'AY', 'HR', 'AR']
+X = data[features].values
+
+# Include team names
+teams = data[['HomeTeam', 'AwayTeam']].values
+
+# Target
+y = data['FTR'].apply(lambda x: 1 if x == 'H' else 0 if x == 'A' else 2).values
+
+# Normalizing the data
+scaler = MinMaxScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Reshape for LSTM [samples, time steps, features]
+X_scaled = X_scaled.reshape((X_scaled.shape[0], 1, X_scaled.shape[1]))
+
+# Split the data
+train_size = int(len(X_scaled) * 0.8)
+X_train, X_test = X_scaled[:train_size], X_scaled[train_size:]
+y_train, y_test = y[:train_size], y[train_size:]
+teams_train, teams_test = teams[:train_size], teams[train_size:]
+
+# Building the LSTM model
+model = Sequential()
+model.add(LSTM(50, activation='relu', input_shape=(X_train.shape[1], X_train.shape[2])))
+model.add(Dense(3, activation='softmax'))  # 3 classes for Home win, Away win, Draw
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+# Save the best model
+checkpoint = ModelCheckpoint('best_model.keras', monitor='val_loss', save_best_only=True, mode='min')
+
+# Train the model
+history = model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2, callbacks=[checkpoint])
+
+# Load the best model
+model.load_weights('best_model.keras')
+
+# Streamlit app
+st.title('Football Match Outcome Predictor')
+
+# Select teams
+home_team = st.selectbox('Select Home Team', data['HomeTeam'].unique())
+away_team = st.selectbox('Select Away Team', data['AwayTeam'].unique())
+
+# Generate average input features for selected teams
+avg_features = data[(data['HomeTeam'] == home_team) & (data['AwayTeam'] == away_team)][features].mean().fillna(0)
+input_df = pd.DataFrame([avg_features])
+
+# Normalize the input data
+input_scaled = scaler.transform(input_df)
+input_scaled = input_scaled.reshape((input_scaled.shape[0], 1, input_scaled.shape[1]))
+
+# Make prediction
+prediction = model.predict(input_scaled)
+predicted_class = np.argmax(prediction, axis=1)[0]
+
+# Map prediction to outcome
+outcome_map = {0: 'Away Win', 1: 'Home Win', 2: 'Draw'}
+predicted_outcome = outcome_map[predicted_class]
+
+# Determine the winning team name
+if predicted_outcome == 'Home Win':
+    winning_team = home_team
+elif predicted_outcome == 'Away Win':
+    winning_team = away_team
+else:
+    winning_team = 'None'
+
+# Display results
+st.write(f"Predicted Outcome: {home_team} vs {away_team}, {predicted_outcome}")
+if winning_team != 'None':
+    st.write(f"Winning Team: {winning_team}")
+else:
+    st.write("It's a draw, no winning team.")
+\
